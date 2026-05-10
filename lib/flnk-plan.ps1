@@ -12,6 +12,11 @@
 #                                                 Close run successfully (narrative is path to file)
 #   block    <projectId> <workItemId> <runId> <reason>
 #                                                 Close run as Blocked
+#   attach   <workItemId> <filePath>              Upload a file as a work-item attachment
+#                                                 (screenshots, repro recordings, log dumps)
+#   assigned <projectId> [agentId]                List work items assigned to <agentId>
+#                                                 (defaults to FLNKIT_AGENT_ID, i.e. claude-code).
+#                                                 Used by Scan mode — "what's on my plate?".
 #
 # Env:
 #   FLNKIT_API_KEY   — required, scope: projects
@@ -101,6 +106,45 @@ switch ($Command) {
         if (-not $A1 -or -not $A2 -or -not $A3 -or -not $A4) { Write-Error 'Usage: block <projectId> <workItemId> <runId> <reason>'; exit 2 }
         $body = @{ reason = $A4 }
         Invoke-Flnk -Method POST -Path "/api/projects/$A1/work-items/$A2/agent-run/$A3/block" -Body $body | ConvertTo-Json -Depth 10
+    }
+    'assigned' {
+        if (-not $A1) { Write-Error 'Usage: assigned <projectId> [agentId]'; exit 2 }
+        # Default to the configured agent identifier when the caller doesn't override.
+        $whoseLine = if ($A2) { $A2 } else { $agentId }
+        # The /context endpoint accepts ?assignee=<agentId> and lifts the recentItems
+        # cap when the filter is set, so we can pass a generous value here without
+        # worrying about exceeding the default 100 cap.
+        $encoded = [System.Uri]::EscapeDataString($whoseLine)
+        Invoke-Flnk -Method GET -Path "/api/projects/$A1/context?assignee=$encoded&recentItems=200" | ConvertTo-Json -Depth 10
+    }
+    'attach' {
+        if (-not $A1 -or -not $A2) { Write-Error 'Usage: attach <workItemId> <filePath>'; exit 2 }
+        if (-not (Test-Path $A2)) { Write-Error "File not found: $A2"; exit 2 }
+
+        # Multipart upload — Invoke-RestMethod's -Form parameter handles the
+        # boundary + content-type encoding; we just hand it a hashtable.
+        # Use a minimal header set (no Content-Type — Invoke-RestMethod sets the
+        # multipart/form-data header itself with the right boundary) plus the
+        # API key.
+        $multipartHeaders = @{
+            'X-Api-Key' = $apiKey
+            'Accept'    = 'application/json'
+        }
+        $url = "$apiBase/api/projects/work-items/$A1/attachments"
+        try {
+            $form = @{ file = Get-Item -Path $A2 }
+            Invoke-RestMethod -Method POST -Uri $url -Headers $multipartHeaders -Form $form | ConvertTo-Json -Depth 10
+        } catch {
+            $resp = $_.Exception.Response
+            if ($resp) {
+                $reader = [System.IO.StreamReader]::new($resp.GetResponseStream())
+                $body = $reader.ReadToEnd()
+                Write-Error "Attachment upload failed: $($resp.StatusCode) $($resp.StatusDescription)`n$body"
+            } else {
+                Write-Error $_
+            }
+            exit 1
+        }
     }
     default {
         Write-Error "Unknown command '$Command'. See script header for usage."

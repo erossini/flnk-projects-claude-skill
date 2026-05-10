@@ -15,6 +15,7 @@ rows in the user's FastLinkIt Projects board. It uses three loops:
 | **Pickup** | "start working on FLNKA-N" | Open agent run → move item to in-progress column |
 | **Wrap-up** | "I'm done with FLNKA-N" / agent finishes natural unit of work | Close agent run → move item to review/done column → narrative summary |
 | **Bug** | "log a bug", "bug:", "I just hit X", "this looks broken" | Draft a single bug item with structured repro steps → confirm → POST as standalone work item |
+| **Scan** | "what's on my plate?", "anything assigned to me?", "pick up the next one", "resume what I was doing" | Filter recentItems to items where assignee matches the agent identifier → group by status → suggest pickup / resume |
 
 ## Required env
 
@@ -237,7 +238,29 @@ something else:
    is a one-item special-case). Report back the new FLNKA-N + the
    `/projects/{id}` URL.
 
-6. **Optional pickup chain**: if it's clear the user wants to start fixing
+6. **If the user pasted screenshots / files**, attach them to the new
+   work item AFTER the create call:
+   - Each pasted image lands at a real disk path (Claude Code surfaces
+     these in the conversation as `[Image: source: <path>]`).
+   - List the files in the proposal preview BEFORE the confirmation gate
+     so the user knows what'll be attached:
+
+     ```
+     BUG  Resize handle pushes preview off-screen
+     priority: normal · tags: bug, board, ux
+     📎 Attachments: screenshot-2026-05-09-bug.png (442 KB)
+
+     Push to FLNKA + upload 1 attachment? (y / N)
+     ```
+
+   - On the user's "yes", call `... attach <work-item-id> <file-path>`
+     for each file after the plan POST succeeds. The server's allowlist
+     rejects executables silently — just report what landed.
+   - If an attachment upload fails, surface the failure but don't roll
+     back the create — the work item is still useful without the
+     screenshot. Suggest re-attaching manually via the UI.
+
+7. **Optional pickup chain**: if it's clear the user wants to start fixing
    the bug right now, ask "Want me to pick it up now? (y / N)" — on yes,
    chain straight into Pickup mode with the new item id. Don't auto-pickup
    without asking.
@@ -246,6 +269,74 @@ If the bug came up while you were already in the middle of a pickup on
 FLNKA-X, the original run stays open — log the bug as a side action, then
 return your attention to FLNKA-X (or call `block` on FLNKA-X if the bug
 literally blocks the work).
+
+## Scan mode
+
+When the user asks "what's on my plate?", "anything assigned to me?",
+"what should I resume?", or similar — they want to see the work already
+queued for the agent, not propose new items.
+
+1. Run `... assigned <project-id>` (helper script) or call
+   `get_project_context` with `assignee = <FLNKIT_AGENT_ID, default
+   "claude-code">` (MCP tool). The server returns `recentItems`
+   filtered to items where `AssigneeUserId` matches the agent
+   identifier, with the cap lifted to 200.
+
+2. **Group by status** using the project's column keys, prioritising
+   what the human probably wants to see first:
+
+   - **In progress** items first — these may have an open `WorkItemAgentRun`
+     that didn't get closed in a previous session. Surface them with a
+     "resume?" suggestion.
+   - **Review / Blocked** items next — work the agent has already done
+     that's waiting for human action; mention but don't propose to do
+     anything.
+   - **Backlog / To do** items last — these are ready to pick up. Sort
+     by `priority` desc, then by `Number`.
+
+3. Render the response as a grouped list, with the status column the
+   item's in:
+
+   ```
+   You have 4 items assigned to claude-code on FastLinkIt Agile project:
+
+   In progress (1)
+   - FLNKA-22  Worktree-based execution sandbox    (likely 28h)
+              ⚠ run from previous session may still be open
+
+   Backlog (2)
+   - FLNKA-23  As an AI agent, I want a git worktree…  (priority: high)
+   - FLNKA-26  As a project owner, I want per-run cost ceilings…  (priority: high)
+
+   Review (1)
+   - FLNKA-27  Surface cost progress in AI activity panel  (waiting for human review)
+
+   Want me to resume FLNKA-22, or pick up FLNKA-23 next? (or "neither")
+   ```
+
+4. **Don't auto-resume / auto-pickup.** Always ask first. If the user
+   says "resume FLNKA-22", chain into Pickup mode (the existing
+   `start_task` call rejects with `409 Conflict` if there's already an
+   active run — useful guard, surface the message).
+   If the user says "pick up the next one" without naming an item, take
+   the highest-priority backlog item from the list and confirm BEFORE
+   calling `start_task`.
+
+5. **"Pick up the next one" shortcut.** When the user phrases the trigger
+   as "pick up the next one" / "give me the next task" / "what's next",
+   skip the grouped list — go straight to the highest-priority backlog
+   item and propose it as a Pickup-mode confirmation.
+
+6. **Session-start passive mention** (optional, low-key): on the FIRST
+   user turn in a fresh session in this repo, if Scan finds in-progress
+   items assigned to the agent, mention once: *"I notice 1 item still in
+   progress assigned to me from a previous session — say 'resume FLNKA-22'
+   to continue."* No auto-resume. Skip the mention entirely when nothing
+   is assigned (don't add noise to every session start).
+
+If the user has multiple projects, default to scanning the project they
+mentioned most recently in this conversation; otherwise scan all of them
+and group by project.
 
 ## Plan JSON envelope
 

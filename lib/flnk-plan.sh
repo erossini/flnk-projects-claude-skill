@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# flnk-plan.sh — POSIX mirror of flnk-plan.ps1. Same six subcommands, same env.
+# flnk-plan.sh — POSIX mirror of flnk-plan.ps1. Same seven subcommands, same env.
 # Use on macOS / Linux / WSL where PowerShell isn't installed.
 #
 # Env: FLNKIT_API_KEY (required), FLNKIT_API_BASE (default https://flnk.it),
@@ -88,8 +88,36 @@ case "$cmd" in
         body="{\"reason\":$(json_escape "$reason")}"
         call POST "/api/projects/$proj/work-items/$wi/agent-run/$run/block" "$body"
         ;;
+    assigned)
+        proj=${1:?Usage: assigned <projectId> [agentId]}
+        # Default to the configured agent identifier when the caller doesn't override.
+        whose=${2:-$AGENT_ID}
+        # urlencode the assignee — agent ids may contain dashes / dots that are
+        # safe but a future "claude/sonnet/4.5" form wouldn't be. Use python's
+        # urllib.parse.quote since coreutils doesn't ship a portable encoder.
+        whose_encoded=$(printf '%s' "$whose" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=""))')
+        call GET "/api/projects/$proj/context?assignee=$whose_encoded&recentItems=200"
+        ;;
+    attach)
+        wi=${1:?Usage: attach <workItemId> <filePath>}
+        file=${2:?Usage: attach <workItemId> <filePath>}
+        [ -f "$file" ] || { echo >&2 "File not found: $file"; exit 2; }
+
+        # Multipart upload — curl -F handles the boundary + multipart/form-data
+        # encoding. We can't reuse the JSON-only call() helper because it sets
+        # Content-Type: application/json which would clash with the multipart
+        # type curl sets via -F.
+        attach_opts=(--silent --show-error --fail-with-body
+                     -H "X-Api-Key: $API_KEY"
+                     -H "Accept: application/json")
+        if [ "${FLNKIT_INSECURE:-}" = "1" ] || echo "$API_BASE" | grep -q localhost; then
+            attach_opts+=(--insecure)
+        fi
+        curl "${attach_opts[@]}" -X POST -F "file=@$file" \
+             "$API_BASE/api/projects/work-items/$wi/attachments"
+        ;;
     *)
-        echo >&2 "Unknown command '$cmd'. Subcommands: list, context, plan, start, complete, block"
+        echo >&2 "Unknown command '$cmd'. Subcommands: list, context, plan, start, complete, block, attach, assigned"
         exit 2
         ;;
 esac
