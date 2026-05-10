@@ -123,6 +123,25 @@ don't have to land parents first.
   / component.
 - Estimate optional — bugs vary wildly.
 
+### Test tasks (any methodology)
+- **When to use**: smoke-test / verification work generated AT WRAP-UP TIME
+  — the human needs to manually verify Claude's work after `complete_task`
+  fires. Distinct from `acceptance_criteria` on the parent story
+  (which are conditions baked into the story itself).
+- **Type**: `task` (works in Kanban / Agile / Waterfall — every methodology
+  allows it).
+- **Title**: `"Test: <one-line description>"` or `"Smoke test: <…>"`.
+- **Parent**: the work item that produced the code being tested
+  (`parent_local_id`).
+- **Description**: numbered verification steps + expected outcome per step.
+- **Tags**: always `test` + `smoke-test`, plus area tags inherited from the
+  parent (`board`, `mailing`, `payments`, etc.).
+- **Estimate**: usually small (15-60 minutes per test) but document if it
+  involves slow setup (provisioning a test environment, waiting on async
+  jobs).
+- Pre-emptive tests — written *before* the code — are folded into the parent
+  story's `acceptance_criteria` instead. Don't double-track.
+
 ### Subtasks (Agile only)
 - Use sparingly — overuse turns the board into a TODO list.
 - Reserve for genuinely separable chunks of one Story (front-end vs

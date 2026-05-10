@@ -156,9 +156,78 @@ When the agent finishes the work or the user says "done":
 1. Call `... complete <project-id> <work-item-id> <run-id>` with a narrative
    describing what was done (key files touched, follow-up items spawned, any
    gotchas). Server moves the item to the review (or done) column.
-2. If something blocks progress and you can't finish, call
+2. **If the completed work needs human verification**, list the smoke tests
+   in the wrap-up response AND offer to create them as test tasks parented
+   to the completed item. See "Test tasks at wrap-up" below.
+3. If something blocks progress and you can't finish, call
    `... block <project-id> <work-item-id> <run-id> "<reason>"` instead.
    The reason is mandatory — no silent failures.
+
+### Test tasks at wrap-up
+
+Smoke tests are **verification tasks** generated at wrap-up time — they
+describe steps the human needs to take to confirm the work is correct.
+They're distinct from `acceptance_criteria` on the parent story (which are
+conditions baked into the story itself); test tasks are a *follow-up
+checklist* that lives on the board so the verification step is tracked
+across sessions.
+
+**When to offer test tasks:**
+
+- The work touched real code or configuration that benefits from manual
+  smoke-testing (UI changes, migration scripts, new endpoints, integration
+  with external systems).
+- You can't 100% prove it works from the workspace — the user needs to
+  reload a page, click through a flow, run a query, etc.
+- The number of smoke-test steps is genuinely 2+. Don't create a single
+  test task with one bullet — that's a comment in the narrative, not a
+  trackable item.
+
+**When NOT to offer test tasks:**
+
+- The work was pure refactor / rename / docs and the existing tests cover it.
+- The acceptance_criteria on the parent story already enumerates the
+  verification steps — no need to duplicate them as separate items.
+- The wrap-up was a `block` (Blocked / Failed runs aren't ready for
+  verification yet).
+
+**The ask after `complete_task`:**
+
+```
+Moved FLNKA-23 to Review.
+
+Suggested smoke tests for you to run:
+1. <verification step 1>
+2. <verification step 2>
+3. <verification step 3>
+
+Want me to create these as test tasks parented to FLNKA-23? (y / N)
+```
+
+**On the user's "yes":** make a single-item plan POST per test (or one
+multi-item plan with the three) using these defaults:
+
+- `type = "task"` (works in all methodologies — Kanban / Agile / Waterfall).
+- `parent_local_id` = the just-completed item, so the test sits in the
+  parent's tree.
+- `title` = `"Test: <one-line description>"` or `"Smoke test: <…>"`.
+- `description` = the verification steps, formatted as a numbered list +
+  expected outcome per step.
+- `tags = ["test", "smoke-test"]` plus any area tags inherited from the
+  parent (e.g. `board`, `mailing`, `payments`).
+- `priority` = `normal` by default; `high` only if the user signals
+  urgency or it's a regression-blocking test.
+- `initial_status = "backlog"` — tests sit in the queue until the user
+  picks them up to run.
+
+After creating, report the new item numbers + titles, and remind the user
+the parent is now in Review awaiting their verification:
+
+```
+Created FLNKA-30, FLNKA-31, FLNKA-32 (test tasks under FLNKA-23).
+FLNKA-23 stays in Review until the test tasks are closed — pick one up
+when you're ready to verify.
+```
 
 ## Bug-report mode
 
